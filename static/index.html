@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube → MP4</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --txt:#e8eaf0; --muted:#8b91a1; --acc:#ff3b3b; --ok:#34c759; --border:#2a2f3a; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f4f5f8; --card:#fff; --txt:#15171c; --muted:#6b7080; --border:#e1e4ec; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--txt);
+         font-family:-apple-system, "Segoe UI", Inter, Roboto, sans-serif; padding:16px; }
+  .card { width:100%; max-width:560px; background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h1 span { color:var(--acc); }
+  p.sub { margin:0 0 22px; color:var(--muted); font-size:14px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:14px 0 6px; }
+  input, select { width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--txt); font-size:15px; }
+  input:focus, select:focus { outline:2px solid var(--acc); outline-offset:1px; border-color:transparent; }
+  button { width:100%; margin-top:20px; padding:14px; border:0; border-radius:10px; background:var(--acc); color:#fff; font-size:16px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.55; cursor:wait; }
+  .apercu { display:none; gap:12px; align-items:center; margin-top:14px; padding:10px; border:1px solid var(--border); border-radius:10px; }
+  .apercu img { width:96px; border-radius:6px; }
+  .apercu .t { font-size:14px; font-weight:600; }
+  .apercu .c { font-size:12px; color:var(--muted); }
+  .statut { margin-top:14px; font-size:14px; min-height:20px; color:var(--muted); }
+  .statut.err { color:var(--acc); } .statut.ok { color:var(--ok); }
+  .bar { height:4px; background:var(--border); border-radius:2px; margin-top:10px; overflow:hidden; display:none; }
+  .bar i { display:block; height:100%; width:40%; background:var(--acc); animation:slide 1.2s infinite; }
+  @keyframes slide { from{transform:translateX(-100%)} to{transform:translateX(250%)} }
+  footer { margin-top:18px; font-size:11px; color:var(--muted); text-align:center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>YouTube <span>→</span> MP4</h1>
+  <p class="sub">Collez l'adresse d'une vidéo, choisissez la qualité, téléchargez.</p>
+
+  <label for="url">URL de la vidéo</label>
+  <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off">
+
+  <div class="apercu" id="apercu">
+    <img id="mini" alt="">
+    <div><div class="t" id="titre"></div><div class="c" id="chaine"></div></div>
+  </div>
+
+  <label for="qualite">Qualité</label>
+  <select id="qualite">
+    <option value="best">Meilleure disponible</option>
+    <option value="1080">1080p max</option>
+    <option value="720">720p max</option>
+    <option value="480">480p max</option>
+  </select>
+
+  <button id="go">Télécharger en MP4</button>
+  <div class="bar" id="bar"><i></i></div>
+  <div class="statut" id="statut"></div>
+  <footer>Réservé aux contenus dont vous détenez les droits ou l'autorisation.</footer>
+</div>
+
+<script>
+  // ───────────────────────────────────────────────────────────────
+  // ADRESSE DU SERVEUR DE TÉLÉCHARGEMENT
+  // Sur Netlify : mettez ici l'URL publique de votre serveur (Railway, Render, Fly, maison).
+  // Laissez "" si cette page est servie par le serveur lui-même.
+  const API = "";
+  // ───────────────────────────────────────────────────────────────
+
+  const $ = id => document.getElementById(id);
+  const statut = (txt, cls="") => { $("statut").textContent = txt; $("statut").className = "statut " + cls; };
+  let timer;
+
+  $("url").addEventListener("input", () => {
+    clearTimeout(timer);
+    $("apercu").style.display = "none";
+    const u = $("url").value.trim();
+    if (!/youtu\.?be/.test(u)) return;
+    timer = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/api/info?url=${encodeURIComponent(u)}`);
+        const j = await r.json();
+        if (j.erreur) return;
+        $("mini").src = j.miniature || ""; $("titre").textContent = j.titre || ""; $("chaine").textContent = j.chaine || "";
+        $("apercu").style.display = "flex";
+      } catch {}
+    }, 600);
+  });
+
+  $("go").addEventListener("click", async () => {
+    const url = $("url").value.trim();
+    if (!url) { statut("Collez d'abord une URL YouTube.", "err"); return; }
+    $("go").disabled = true; $("bar").style.display = "block";
+    statut("Téléchargement et conversion en cours… (peut prendre 1 à 2 min selon la vidéo)");
+    try {
+      const r = await fetch(`${API}/api/download`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, qualite: $("qualite").value })
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.erreur || `Erreur ${r.status}`); }
+      const nom = decodeURIComponent((r.headers.get("Content-Disposition") || "").match(/filename\*?=(?:UTF-8'')?"?([^";]+)/)?.[1] || "video.mp4");
+      const blob = await r.blob();
+      const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: nom });
+      document.body.appendChild(a); a.click(); a.remove();
+      statut(`Terminé : ${nom}`, "ok");
+    } catch (e) {
+      statut("Échec : " + e.message, "err");
+    } finally {
+      $("go").disabled = false; $("bar").style.display = "none";
+    }
+  });
+</script>
+</body>
+</html>
