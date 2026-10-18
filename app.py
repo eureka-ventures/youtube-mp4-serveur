@@ -30,6 +30,13 @@ def options_communes():
         "no_warnings": True,
         "noplaylist": True,
         "format_sort": ["ext:mp4:m4a"],  # préfère le MP4 natif quand il existe
+        # téléchargement par morceaux + reprise : évite les coupures « N more bytes expected »
+        "http_chunk_size": 10 * 1024 * 1024,
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "continuedl": True,
+        "socket_timeout": 60,
     }
     cookies = os.environ.get("COOKIES_TXT", "").strip()
     if cookies:
