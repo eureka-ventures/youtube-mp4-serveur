@@ -20,6 +20,8 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)  # autorise la page Netlify à appeler ce serveur
 
 HAUTEURS = {"best": None, "1080": 1080, "720": 720, "480": 480}
+COOKIES_LOCK = threading.Lock()
+DOWNLOAD_LOCK = threading.Lock()  # une seule vidéo à la fois (une session YouTube = un flux)
 YT_RE = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
 
 
@@ -41,9 +43,14 @@ def options_communes():
     cookies = os.environ.get("COOKIES_TXT", "").strip()
     if cookies:
         # avec cookies : client web uniquement (les autres clients les ignorent)
+        # Le fichier est écrit UNE seule fois : YouTube renouvelle les cookies à chaque
+        # échange et yt-dlp enregistre la version à jour ; la réécrire à chaque vidéo
+        # réinjecterait des cookies périmés (→ « Sign in to confirm you're not a bot »).
         chemin = "/tmp/cookies.txt"
-        with open(chemin, "w", encoding="utf-8") as f:
-            f.write(cookies + "\n")
+        with COOKIES_LOCK:
+            if not os.path.exists(chemin):
+                with open(chemin, "w", encoding="utf-8") as f:
+                    f.write(cookies + "\n")
         o["cookiefile"] = chemin
     else:
         # sans cookies : clients alternatifs, contournent souvent le blocage des IP cloud
@@ -110,7 +117,7 @@ def download():
         "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
     }
     try:
-        with yt_dlp.YoutubeDL(options) as ydl:
+        with DOWNLOAD_LOCK, yt_dlp.YoutubeDL(options) as ydl:
             ydl.extract_info(url, download=True)
         fichiers = [f for f in os.listdir(dossier) if f.lower().endswith(".mp4")]
         if not fichiers:
