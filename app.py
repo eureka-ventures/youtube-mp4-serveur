@@ -29,15 +29,18 @@ def options_communes():
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # clients alternatifs : contournent souvent le blocage des IP cloud
-        "extractor_args": {"youtube": {"player_client": ["android_vr", "ios", "web"]}},
+        "format_sort": ["ext:mp4:m4a"],  # préfère le MP4 natif quand il existe
     }
     cookies = os.environ.get("COOKIES_TXT", "").strip()
     if cookies:
+        # avec cookies : client web uniquement (les autres clients les ignorent)
         chemin = "/tmp/cookies.txt"
         with open(chemin, "w", encoding="utf-8") as f:
             f.write(cookies + "\n")
         o["cookiefile"] = chemin
+    else:
+        # sans cookies : clients alternatifs, contournent souvent le blocage des IP cloud
+        o["extractor_args"] = {"youtube": {"player_client": ["android_vr", "ios", "web"]}}
     proxy = os.environ.get("PROXY", "").strip()
     if proxy:
         o["proxy"] = proxy
@@ -46,10 +49,8 @@ def options_communes():
 
 def construire_format(h):
     sel = f"[height<={h}]" if h else ""
-    return (
-        f"bestvideo{sel}[ext=mp4]+bestaudio[ext=m4a]/"
-        f"bestvideo{sel}+bestaudio/best{sel}[ext=mp4]/best{sel}"
-    )
+    # vidéo+audio séparés si possible, sinon le meilleur fichier combiné, sinon n'importe quoi
+    return f"bv*{sel}+ba/b{sel}/b"
 
 
 def nettoyer_plus_tard(dossier, delai=120):
@@ -98,6 +99,8 @@ def download():
         "format": construire_format(HAUTEURS[qualite]),
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(dossier, "%(title).120s.%(ext)s"),
+        # garantit un .mp4 en sortie (remux sans ré-encodage si nécessaire)
+        "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
     }
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
