@@ -1,5 +1,9 @@
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# Runtime JavaScript requis par yt-dlp pour déchiffrer les flux YouTube
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+ENV PATH="/usr/local/bin:${PATH}"
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

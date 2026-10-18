@@ -23,6 +23,27 @@ HAUTEURS = {"best": None, "1080": 1080, "720": 720, "480": 480}
 YT_RE = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
 
 
+def options_communes():
+    """Options yt-dlp communes : cookies / proxy fournis via variables d'environnement."""
+    o = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        # clients alternatifs : contournent souvent le blocage des IP cloud
+        "extractor_args": {"youtube": {"player_client": ["android_vr", "ios", "web"]}},
+    }
+    cookies = os.environ.get("COOKIES_TXT", "").strip()
+    if cookies:
+        chemin = "/tmp/cookies.txt"
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write(cookies + "\n")
+        o["cookiefile"] = chemin
+    proxy = os.environ.get("PROXY", "").strip()
+    if proxy:
+        o["proxy"] = proxy
+    return o
+
+
 def construire_format(h):
     sel = f"[height<={h}]" if h else ""
     return (
@@ -49,7 +70,7 @@ def info():
     if not YT_RE.match(url):
         return jsonify({"erreur": "URL YouTube invalide."}), 400
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True, "skip_download": True}) as ydl:
+        with yt_dlp.YoutubeDL({**options_communes(), "skip_download": True}) as ydl:
             i = ydl.extract_info(url, download=False)
         return jsonify({
             "titre": i.get("title"),
@@ -73,13 +94,10 @@ def download():
 
     dossier = tempfile.mkdtemp(prefix="ytmp4_")
     options = {
+        **options_communes(),
         "format": construire_format(HAUTEURS[qualite]),
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(dossier, "%(title).120s.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "restrictfilenames": False,
     }
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
