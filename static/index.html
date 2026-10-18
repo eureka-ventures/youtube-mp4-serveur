@@ -210,8 +210,7 @@
             }
             s.textContent = "✗ " + e.message.slice(0, 60); s.title = e.message; s.className = "s err"; ko++;
           }
-          // pause entre deux vidéos pour ne pas déclencher la détection anti-robot
-          if (i < urlsLot.length - 1) { statut(`Pause 15 s avant la vidéo ${i + 2}…`); await new Promise(r => setTimeout(r, 15000)); }
+
         }
         statut(`Terminé : ${ok} réussie(s), ${ko} échec(s).`, ko ? "err" : "ok");
       }
