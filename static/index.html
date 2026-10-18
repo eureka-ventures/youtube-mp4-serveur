@@ -200,7 +200,18 @@
           s.closest("div").scrollIntoView({ block: "nearest" });
           statut(`Vidéo ${i + 1} / ${urlsLot.length} en cours… (${ok} réussie(s), ${ko} échec(s))`);
           try { await telechargerUne(urlsLot[i]); s.textContent = "✓ téléchargée"; s.className = "s ok"; ok++; }
-          catch (e) { s.textContent = "✗ " + e.message.slice(0, 60); s.title = e.message; s.className = "s err"; ko++; }
+          catch (e) {
+            if (/not a bot|Sign in/i.test(e.message)) {
+              // YouTube trouve l'enchaînement trop rapide : on attend 60 s puis on retente une fois
+              s.textContent = "pause 60 s puis nouvel essai…";
+              await new Promise(r => setTimeout(r, 60000));
+              try { await telechargerUne(urlsLot[i]); s.textContent = "✓ téléchargée (2e essai)"; s.className = "s ok"; ok++; continue; }
+              catch (e2) { e = e2; }
+            }
+            s.textContent = "✗ " + e.message.slice(0, 60); s.title = e.message; s.className = "s err"; ko++;
+          }
+          // pause entre deux vidéos pour ne pas déclencher la détection anti-robot
+          if (i < urlsLot.length - 1) { statut(`Pause 15 s avant la vidéo ${i + 2}…`); await new Promise(r => setTimeout(r, 15000)); }
         }
         statut(`Terminé : ${ok} réussie(s), ${ko} échec(s).`, ko ? "err" : "ok");
       }
