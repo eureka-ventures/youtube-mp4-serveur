@@ -4,9 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl unz
 # Runtime JavaScript requis par yt-dlp pour déchiffrer les flux YouTube
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 ENV PATH="/usr/local/bin:${PATH}"
+RUN deno --version
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -c "import yt_dlp, sys; print('yt-dlp', yt_dlp.version.__version__)"
 COPY . .
 ENV PORT=8080
 EXPOSE 8080
