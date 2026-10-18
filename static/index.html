@@ -29,19 +29,48 @@
   .bar i { display:block; height:100%; width:40%; background:var(--acc); animation:slide 1.2s infinite; }
   @keyframes slide { from{transform:translateX(-100%)} to{transform:translateX(250%)} }
   footer { margin-top:18px; font-size:11px; color:var(--muted); text-align:center; }
+  .onglets { display:flex; gap:6px; margin-bottom:6px; }
+  .onglets button { margin:0; padding:9px; font-size:14px; background:var(--bg); color:var(--muted); border:1px solid var(--border); }
+  .onglets button.actif { background:var(--acc); color:#fff; border-color:transparent; }
+  .mode { display:none; } .mode.actif { display:block; }
+  .zone { border:2px dashed var(--border); border-radius:10px; padding:18px; text-align:center; color:var(--muted); font-size:14px; cursor:pointer; }
+  .zone.survol { border-color:var(--acc); }
+  textarea { width:100%; min-height:90px; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--txt); font-size:14px; font-family:inherit; resize:vertical; }
+  .liste { margin-top:14px; max-height:260px; overflow:auto; border:1px solid var(--border); border-radius:10px; display:none; }
+  .liste div { display:flex; justify-content:space-between; gap:10px; padding:8px 12px; font-size:13px; border-bottom:1px solid var(--border); }
+  .liste div:last-child { border-bottom:0; }
+  .liste .u { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+  .liste .s { flex-shrink:0; } .s.ok { color:var(--ok); } .s.err { color:var(--acc); } .s.cours { color:#f5a623; }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>YouTube <span>→</span> MP4</h1>
-  <p class="sub">Collez l'adresse d'une vidéo, choisissez la qualité, téléchargez.</p>
+  <p class="sub">Une vidéo, ou toute une liste depuis un fichier Excel.</p>
 
+  <div class="onglets">
+    <button class="actif" data-mode="une">Une vidéo</button>
+    <button data-mode="lot">Plusieurs (Excel / liste)</button>
+  </div>
+
+  <div class="mode actif" id="mode-une">
   <label for="url">URL de la vidéo</label>
   <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off">
 
   <div class="apercu" id="apercu">
     <img id="mini" alt="">
     <div><div class="t" id="titre"></div><div class="c" id="chaine"></div></div>
+  </div>
+
+  </div>
+
+  <div class="mode" id="mode-lot">
+    <label>Fichier Excel ou CSV</label>
+    <div class="zone" id="zone">Glissez votre fichier ici ou cliquez pour choisir<br><small>.xlsx, .xls, .csv — toutes les URL YouTube trouvées dans les cellules seront prises</small></div>
+    <input id="fichier" type="file" accept=".xlsx,.xls,.csv,.txt" style="display:none">
+    <label for="texte">…ou collez une liste d'URL (une par ligne)</label>
+    <textarea id="texte" placeholder="https://www.youtube.com/watch?v=…&#10;https://youtu.be/…"></textarea>
+    <div class="liste" id="liste"></div>
   </div>
 
   <label for="qualite">Qualité</label>
@@ -58,12 +87,13 @@
   <footer>Réservé aux contenus dont vous détenez les droits ou l'autorisation.</footer>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
   // ───────────────────────────────────────────────────────────────
   // ADRESSE DU SERVEUR DE TÉLÉCHARGEMENT
   // Sur Netlify : mettez ici l'URL publique de votre serveur (Railway, Render, Fly, maison).
   // Laissez "" si cette page est servie par le serveur lui-même.
-  const API = "";
+  const API = "https://youtube-mp4-serveur-production.up.railway.app";
   // ───────────────────────────────────────────────────────────────
 
   const $ = id => document.getElementById(id);
@@ -86,22 +116,94 @@
     }, 600);
   });
 
+  // ── Télécharge une URL et déclenche l'enregistrement dans le navigateur ──
+  async function telechargerUne(url) {
+    const r = await fetch(`${API}/api/download`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, qualite: $("qualite").value })
+    });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.erreur || `Erreur ${r.status}`); }
+    const nom = decodeURIComponent((r.headers.get("Content-Disposition") || "").match(/filename\*?=(?:UTF-8'')?"?([^";]+)/)?.[1] || "video.mp4");
+    const blob = await r.blob();
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: nom });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    return nom;
+  }
+
+  // ── Onglets ──
+  let mode = "une";
+  document.querySelectorAll(".onglets button").forEach(b => b.addEventListener("click", () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll(".onglets button").forEach(x => x.classList.toggle("actif", x === b));
+    document.querySelectorAll(".mode").forEach(x => x.classList.toggle("actif", x.id === "mode-" + mode));
+    $("go").textContent = mode === "lot" ? "Télécharger toute la liste" : "Télécharger en MP4";
+    statut("");
+  }));
+
+  // ── Lot : extraction des URL depuis Excel/CSV/texte ──
+  const YT_URL = /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?[^\s"']*v=|shorts\/|embed\/|live\/)|youtu\.be\/)[A-Za-z0-9_-]{6,}[^\s"']*/g;
+  let urlsLot = [];
+
+  function extraireUrls(texte) {
+    const vues = new Set();
+    return (texte.match(YT_URL) || []).filter(u => { const k = u.split("&")[0]; if (vues.has(k)) return false; vues.add(k); return true; });
+  }
+
+  function afficherListe() {
+    const L = $("liste"); L.innerHTML = "";
+    if (!urlsLot.length) { L.style.display = "none"; return; }
+    urlsLot.forEach((u, i) => {
+      L.insertAdjacentHTML("beforeend", `<div><span class="u" title="${u}">${i + 1}. ${u}</span><span class="s" id="s${i}">en attente</span></div>`);
+    });
+    L.style.display = "block";
+    statut(`${urlsLot.length} vidéo(s) détectée(s).`);
+  }
+
+  async function lireFichier(f) {
+    const nom = f.name.toLowerCase();
+    let texte = "";
+    if (nom.endsWith(".xlsx") || nom.endsWith(".xls")) {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+      wb.SheetNames.forEach(n => { texte += XLSX.utils.sheet_to_csv(wb.Sheets[n]) + "\n"; });
+    } else {
+      texte = await f.text();
+    }
+    urlsLot = extraireUrls(texte);
+    $("texte").value = urlsLot.join("\n");
+    afficherListe();
+    if (!urlsLot.length) statut("Aucune URL YouTube trouvée dans ce fichier.", "err");
+  }
+
+  $("zone").addEventListener("click", () => $("fichier").click());
+  $("fichier").addEventListener("change", e => e.target.files[0] && lireFichier(e.target.files[0]));
+  $("zone").addEventListener("dragover", e => { e.preventDefault(); $("zone").classList.add("survol"); });
+  $("zone").addEventListener("dragleave", () => $("zone").classList.remove("survol"));
+  $("zone").addEventListener("drop", e => { e.preventDefault(); $("zone").classList.remove("survol"); e.dataTransfer.files[0] && lireFichier(e.dataTransfer.files[0]); });
+  $("texte").addEventListener("input", () => { urlsLot = extraireUrls($("texte").value); afficherListe(); });
+
+  // ── Bouton principal ──
   $("go").addEventListener("click", async () => {
-    const url = $("url").value.trim();
-    if (!url) { statut("Collez d'abord une URL YouTube.", "err"); return; }
     $("go").disabled = true; $("bar").style.display = "block";
-    statut("Téléchargement et conversion en cours… (peut prendre 1 à 2 min selon la vidéo)");
     try {
-      const r = await fetch(`${API}/api/download`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, qualite: $("qualite").value })
-      });
-      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.erreur || `Erreur ${r.status}`); }
-      const nom = decodeURIComponent((r.headers.get("Content-Disposition") || "").match(/filename\*?=(?:UTF-8'')?"?([^";]+)/)?.[1] || "video.mp4");
-      const blob = await r.blob();
-      const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: nom });
-      document.body.appendChild(a); a.click(); a.remove();
-      statut(`Terminé : ${nom}`, "ok");
+      if (mode === "une") {
+        const url = $("url").value.trim();
+        if (!url) throw new Error("Collez d'abord une URL YouTube.");
+        statut("Téléchargement et conversion en cours… (1 à 2 min selon la vidéo)");
+        const nom = await telechargerUne(url);
+        statut(`Terminé : ${nom}`, "ok");
+      } else {
+        if (!urlsLot.length) throw new Error("Déposez un fichier Excel ou collez des URL.");
+        let ok = 0, ko = 0;
+        for (let i = 0; i < urlsLot.length; i++) {
+          const s = $("s" + i); s.textContent = "en cours…"; s.className = "s cours";
+          s.closest("div").scrollIntoView({ block: "nearest" });
+          statut(`Vidéo ${i + 1} / ${urlsLot.length} en cours… (${ok} réussie(s), ${ko} échec(s))`);
+          try { await telechargerUne(urlsLot[i]); s.textContent = "✓ téléchargée"; s.className = "s ok"; ok++; }
+          catch (e) { s.textContent = "✗ " + e.message.slice(0, 60); s.title = e.message; s.className = "s err"; ko++; }
+        }
+        statut(`Terminé : ${ok} réussie(s), ${ko} échec(s).`, ko ? "err" : "ok");
+      }
     } catch (e) {
       statut("Échec : " + e.message, "err");
     } finally {
